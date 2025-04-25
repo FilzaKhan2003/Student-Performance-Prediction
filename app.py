@@ -27,36 +27,48 @@ act_num_0 = 0 if activi == "No" else 1
 input_data = np.array([hr_std, pr_scr, hr_slp, sp_ppr, act_num_0, act_num_1])
 
 if st.button("Check Performance"):
-    prediction = model.predict([input_data])
-    predicted_score = round(prediction[0], 2)
-    st.write(f'Prediction : {predicted_score}')
-
-    # Save to history file
-    new_entry = pd.DataFrame([{
-        'Name': name,
-        'Studied Hours': hr_std,
-        'Previous Score': pr_scr,
-        'Sleep Hours': hr_slp,
-        'Sample Papers': sp_ppr,
-        'Activity': activi,
-        'Predicted Score': predicted_score
-    }])
-
-    if os.path.exists(HISTORY_FILE):
-        history = pd.read_csv(HISTORY_FILE)
-        history = pd.concat([history, new_entry], ignore_index=True)
+    if name.strip() == "":
+        st.error("⚠️ Please enter your name before proceeding.")
     else:
-        history = new_entry
+        prediction = model.predict([input_data])
+        predicted_score = round(prediction[0], 2)
+        st.success(f"🎯 Predicted Score: {predicted_score}")
 
-    history.to_csv(HISTORY_FILE, index=False)
+        # Save to history
+        new_entry = pd.DataFrame([{
+            'Name': name,
+            'Studied Hours': hr_std,
+            'Previous Score': pr_scr,
+            'Sleep Hours': hr_slp,
+            'Sample Papers': sp_ppr,
+            'Activity': activi,
+            'Predicted Score': predicted_score
+        }])
 
-    # Show previous results for the same user
-    previous_scores = history[history['Name'].str.lower() == name.lower()]
-    if len(previous_scores) > 1:
-        st.subheader("Your Previous Predictions:")
-        st.dataframe(previous_scores)
+        if os.path.exists(HISTORY_FILE):
+            history = pd.read_csv(HISTORY_FILE)
+            history = pd.concat([history, new_entry], ignore_index=True)
+        else:
+            history = new_entry
 
-    # Optional: Show total users
-    total_users = history['Name'].nunique()
-    st.write(f"Total unique users who used the model: {total_users}")
+        history.to_csv(HISTORY_FILE, index=False)
+
+        # Show user-specific history
+        user_history = history[history['Name'].str.lower() == name.lower()]
+        if not user_history.empty:
+            user_history = user_history.copy()
+
+            if len(user_history) == 1:
+                user_history['Status'] = 'Current'
+            else:
+                user_history['Status'] = 'Previous'
+                user_history.loc[user_history.index[-1], 'Status'] = 'Current'
+
+            cols = ['Status'] + [col for col in user_history.columns if col != 'Status']
+            st.subheader("Your Prediction History:")
+            st.dataframe(user_history[cols])
+
+        # Optional: show total user count
+        total_users = history['Name'].nunique()
+        st.write(f"👥 Total unique users: {total_users}")
 
