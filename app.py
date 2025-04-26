@@ -119,6 +119,36 @@ if st.button("Check Performance"):
                                 st.warning(f"📉 Your predicted score has decreased by {abs(improvement):.2f} points since last time.")
                             else:
                                 st.info("Your predicted score is the same as last time.")
+                # 1. Find the best score for each student
+                best_scores = history.groupby('Name')['Predicted Score'].max().reset_index()
+
+                # 2. Sort them by score in descending order
+                best_scores = best_scores.sort_values(by='Predicted Score', ascending=False).reset_index(drop=True)
+
+                # 3. Assign Rank
+                best_scores['Rank'] = best_scores.index + 1
+
+                # 4. Show Top 5 Performers
+                st.subheader("🏆 Top Performers Leaderboard:")
+                st.table(best_scores.head(5))
+
+                # 5. Find the rank of the current user
+                user_rank = best_scores[best_scores['Name'].str.lower() == name.lower()]
+
+                if not user_rank.empty:
+                    rank = int(user_rank['Rank'].values[0])
+                    st.success(f"🎉 {name}, you're currently ranked #{rank}!")
+
+                    # Check how much more to reach #1
+                    top_score = best_scores['Predicted Score'].iloc[0]
+                    your_best = user_rank['Predicted Score'].values[0]
+                    diff = top_score - your_best
+
+                    if diff > 0:
+                        st.info(f"✨ Just {diff:.2f} more points to beat the top performer!")
+                    else:
+                        st.balloons()
+                        st.success("🚀 Congratulations! You are the Top Performer!")
 
                 # Optional: show total user count
                 total_users = len(history['Name'].unique())
