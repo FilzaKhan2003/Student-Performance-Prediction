@@ -2,16 +2,29 @@ import streamlit as st
 import numpy as np
 import pickle
 import joblib
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 import os
 
+# Google Sheets API setup
+def authenticate_gspread():
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_name('gsheet_credentials.json', scope)
+    client = gspread.authorize(creds)
+    return client
+
+def append_to_google_sheet(sheet_name, data):
+    client = authenticate_gspread()
+    # Open your Google Sheet
+    sheet = client.open(sheet_name).sheet1
+    sheet.append_row(data)
+
+# Streamlit app code
 st.title("Student's Performance Checker")
 
 file = open('performance.pkl', 'rb')
 model = joblib.load(file)
-
-# CSV file to store user history
-HISTORY_FILE = 'user_history.csv'
 
 # Collect user input
 name = st.text_input("Your Name")
@@ -19,7 +32,7 @@ hr_std = st.number_input("Studied hour")
 pr_scr = st.number_input("Previous score")
 hr_slp = st.number_input("Sleep hours")
 sp_ppr = st.number_input("No. of sample paper solved")
-activi = st.radio('Activity',['Yes','No'])
+activi = st.radio('Activity', ['Yes', 'No'])
 
 act_num_1 = 1 if activi == "Yes" else 0
 act_num_0 = 0 if activi == "No" else 1
@@ -34,41 +47,62 @@ if st.button("Check Performance"):
         predicted_score = round(prediction[0], 2)
         st.success(f"🎯 Predicted Score: {predicted_score}")
 
-        # Save to history
-        new_entry = pd.DataFrame([{
-            'Name': name,
-            'Studied Hours': hr_std,
-            'Previous Score': pr_scr,
-            'Sleep Hours': hr_slp,
-            'Sample Papers': sp_ppr,
-            'Activity': activi,
-            'Predicted Score': predicted_score
-        }])
+        # Save to Google Sheet with "Current" status for the new entry
+        new_entry = ["Current", name, hr_std, pr_scr, hr_slp, sp_ppr, activi, predicted_score]
+        
+        try:
+            # First, update any existing entries for this user to "Previous"
+            client = authenticate_gspread()
+            sheet = client.open('User History').sheet1
+            all_rows = sheet.get_all_values()
+            
+            # Get the header row and find column indices
+            headers = all_rows[0]
+            status_idx = headers.index("Status")
+            name_idx = headers.index("Name")
+            
+            # Update previous entries for this user to "Previous"
+            for i, row in enumerate(all_rows[1:], start=2):  # Start from 2 because sheet rows are 1-indexed and we skip header
+                if row[name_idx].lower() == name.lower() and row[status_idx] == "Current":
+                    sheet.update_cell(i, status_idx + 1, "Previous")  # +1 because gspread is 1-indexed
+            
+            # Now append the new entry
+            append_to_google_sheet('User History', new_entry)
+            st.success("Data saved to Google Sheet successfully!")
+            
+            # Reload the data to show updated history
+            history_data = sheet.get_all_records()
+            history = pd.DataFrame(history_data)
+            
+            # Ensure all columns are properly typed
+            if 'Name' in history.columns:
+                history['Name'] = history['Name'].astype(str)
+            
+            # Filter for this user's history
+            user_history = history[history['Name'].str.lower() == name.lower()]
+            
+            if not user_history.empty:
+                st.subheader("Your Prediction History:")
+                st.dataframe(user_history)
+                
+                # Show improvement if multiple entries exist
+                if len(user_history) > 1:
+                    current_score = user_history[user_history['Status'] == 'Current']['Predicted Score'].values[0]
+                    previous_scores = user_history[user_history['Status'] == 'Previous']['Predicted Score'].values
+                    if len(previous_scores) > 0:
+                        latest_previous = previous_scores[-1]
+                        improvement = current_score - latest_previous
+                        if improvement > 0:
+                            st.success(f"📈 You've improved by {improvement:.2f} points since your last prediction!")
+                        elif improvement < 0:
+                            st.warning(f"📉 Your predicted score has decreased by {abs(improvement):.2f} points since last time.")
+                        else:
+                            st.info("Your predicted score is the same as last time.")
 
-        if os.path.exists(HISTORY_FILE):
-            history = pd.read_csv(HISTORY_FILE)
-            history = pd.concat([history, new_entry], ignore_index=True)
-        else:
-            history = new_entry
-
-        history.to_csv(HISTORY_FILE, index=False)
-
-        # Show user-specific history
-        user_history = history[history['Name'].str.lower() == name.lower()]
-        if not user_history.empty:
-            user_history = user_history.copy()
-
-            if len(user_history) == 1:
-                user_history['Status'] = 'Current'
-            else:
-                user_history['Status'] = 'Previous'
-                user_history.loc[user_history.index[-1], 'Status'] = 'Current'
-
-            cols = ['Status'] + [col for col in user_history.columns if col != 'Status']
-            st.subheader("Your Prediction History:")
-            st.dataframe(user_history[cols])
-
-        # Optional: show total user count
-        total_users = history['Name'].nunique()
-        st.write(f"👥 Total unique users: {total_users}")
-
+            # Optional: show total user count
+            total_users = len(history['Name'].unique())
+            st.write(f"👥 Total unique users: {total_users}")
+            
+        except Exception as e:
+            st.error(f"Error: {e}")
+            st.error("Check that your Google Sheet has columns: Status, Name, Studied Hours, Previous Score, Sleep Hours, Sample Papers, Activity, Predicted Score")
